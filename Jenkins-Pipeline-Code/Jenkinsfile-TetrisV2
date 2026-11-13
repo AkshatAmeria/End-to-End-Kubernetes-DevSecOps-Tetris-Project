@@ -1,10 +1,128 @@
+// pipeline {
+//     agent any
+//     tools {
+//         nodejs 'nodejs'
+//     }
+//     environment  {
+//         SCANNER_HOME=tool 'sonar-scanner'
+//     }
+//     stages {
+//         stage('Cleaning Workspace') {
+//             steps {
+//                 cleanWs()
+//             }
+//         }
+//         stage('Checkout from Git') {
+//             steps {
+//                 git branch: 'master', url: 'https://github.com/AkshatAmeria/End-to-End-Kubernetes-DevSecOps-Tetris-Project.git'
+//             }
+//         }
+//         stage('Sonarqube Analysis') {
+//             steps {
+//                 dir('Tetris-V2') {
+//                     withSonarQubeEnv('sonar-server') {
+//                         sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Tetris \
+//                         -Dsonar.projectKey=Tetris '''
+//                     }
+//                 }
+//             }
+//         }
+//         stage('Quality Check') {
+//             steps {
+//                 script {
+//                     waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+//                 }
+//             }
+//         }
+//         stage('Installing Dependencies') {
+//             steps {
+//                 dir('Tetris-V2') {
+//                     sh 'npm install'
+//                 }
+//             }
+//         }
+//         stage('OWASP Dependency-Check Scan') {
+//         steps {
+//             catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+//                 dir('Tetris-V1') {
+//                     dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+//                     dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+//                 }
+//             }
+//         }
+//     }
+//         stage('Trivy File Scan') {
+//             steps {
+//                 dir('Tetris-V2') {
+//                     sh 'trivy fs . > trivyfs.txt'
+//                 }
+//             }
+//         }
+//         stage("Docker Image Build") {
+//             steps {
+//                 script {
+//                     dir('Tetris-V2') {
+//                         withDockerRegistry(credentialsId: 'docker') {
+//                             sh 'docker system prune -f'
+//                             sh 'docker build -t tetrisv1 .'
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//         stage("Docker Image Pushing") {
+//             steps {
+//                 script {
+//                     withDockerRegistry(credentialsId: 'docker') {
+//                         sh 'docker tag tetrisv1 akshatameria/tetrisv1:${BUILD_NUMBER}'
+//                         sh 'docker push akshatameria/tetrisv1:${BUILD_NUMBER}'
+//                     }
+//                 }
+//             }
+//         }
+//         stage("TRIVY Image Scan") {
+//             steps {
+//                 sh 'trivy image akshatameria/tetrisv1:${BUILD_NUMBER} > trivyimage.txt'
+//             }
+//         }
+//         stage('Checkout Code') {
+//             steps {
+//                 git branch: 'master', url: 'https://github.com/AkshatAmeria/End-to-End-Kubernetes-DevSecOps-Tetris-Project.git'
+//             }
+//         }
+//         stage('Update Deployment file') {
+//             environment {
+//                 GIT_REPO_NAME = "End-to-End-Kubernetes-DevSecOps-Tetris-Project"
+//                 GIT_USER_NAME = "AkshatAmeria"
+//             }
+//             steps {
+//                 dir('Manifest-file') {
+//                     withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+//                         sh '''
+//                             git config user.email "1201.akshat@gmail.com"
+//                             git config user.name "AkshatAmeria"
+//                             BUILD_NUMBER=${BUILD_NUMBER}
+//                             echo $BUILD_NUMBER
+//                             imageTag=$(grep -oP '(?<=tetrisv1:)[^ ]+' deployment-service.yml)
+//                             echo $imageTag
+//                             sed -i "s/tetrisv1:${imageTag}/tetrisv1:${BUILD_NUMBER}/" deployment-service.yml
+//                             git add deployment-service.yml
+//                             git commit -m "Update deployment Image to version \${BUILD_NUMBER}"
+//                             git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
+//                         '''
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 pipeline {
     agent any
     tools {
         nodejs 'nodejs'
     }
-    environment  {
-        SCANNER_HOME=tool 'sonar-scanner'
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
     }
     stages {
         stage('Cleaning Workspace') {
@@ -21,15 +139,15 @@ pipeline {
             steps {
                 dir('Tetris-V2') {
                     withSonarQubeEnv('sonar-server') {
-                        sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Tetris \
-                        -Dsonar.projectKey=Tetris '''
+                        sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Tetris-V2 \
+                        -Dsonar.projectKey=Tetris-V2 '''
                     }
                 }
             }
         }
         stage('Quality Check') {
             steps {
-                script {
+                timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                 }
             }
@@ -41,16 +159,17 @@ pipeline {
                 }
             }
         }
+        // Disabled until an NVD API key and a newer Dependency-Check version are set up.
+        // To re-enable: delete the "when" block below.
         stage('OWASP Dependency-Check Scan') {
-        steps {
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                dir('Tetris-V1') {
+            when { expression { false } }
+            steps {
+                dir('Tetris-V2') {
                     dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
                     dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                 }
             }
         }
-    }
         stage('Trivy File Scan') {
             steps {
                 dir('Tetris-V2') {
@@ -58,31 +177,31 @@ pipeline {
                 }
             }
         }
-        stage("Docker Image Build") {
+        stage('Docker Image Build') {
             steps {
                 script {
                     dir('Tetris-V2') {
                         withDockerRegistry(credentialsId: 'docker') {
                             sh 'docker system prune -f'
-                            sh 'docker build -t tetrisv1 .'
+                            sh 'docker build -t tetrisv2 .'
                         }
                     }
                 }
             }
         }
-        stage("Docker Image Pushing") {
+        stage('Docker Image Pushing') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker') {
-                        sh 'docker tag tetrisv1 akshatameria/tetrisv1:${BUILD_NUMBER}'
-                        sh 'docker push akshatameria/tetrisv1:${BUILD_NUMBER}'
+                        sh 'docker tag tetrisv2 akshatameria/tetrisv2:${BUILD_NUMBER}'
+                        sh 'docker push akshatameria/tetrisv2:${BUILD_NUMBER}'
                     }
                 }
             }
         }
-        stage("TRIVY Image Scan") {
+        stage('TRIVY Image Scan') {
             steps {
-                sh 'trivy image akshatameria/tetrisv1:${BUILD_NUMBER} > trivyimage.txt'
+                sh 'trivy image akshatameria/tetrisv2:${BUILD_NUMBER} > trivyimage.txt'
             }
         }
         stage('Checkout Code') {
@@ -101,13 +220,14 @@ pipeline {
                         sh '''
                             git config user.email "1201.akshat@gmail.com"
                             git config user.name "AkshatAmeria"
-                            BUILD_NUMBER=${BUILD_NUMBER}
-                            echo $BUILD_NUMBER
-                            imageTag=$(grep -oP '(?<=tetrisv1:)[^ ]+' deployment-service.yml)
-                            echo $imageTag
-                            sed -i "s/tetrisv1:${imageTag}/tetrisv1:${BUILD_NUMBER}/" deployment-service.yml
+                            echo "Build number: ${BUILD_NUMBER}"
+                            echo "Image line before:"
+                            grep "image:" deployment-service.yml
+                            sed -i "s|image: akshatameria/tetris.*|image: akshatameria/tetrisv2:${BUILD_NUMBER}|" deployment-service.yml
+                            echo "Image line after:"
+                            grep "image:" deployment-service.yml
                             git add deployment-service.yml
-                            git commit -m "Update deployment Image to version \${BUILD_NUMBER}"
+                            git commit -m "Update deployment image to tetrisv2:${BUILD_NUMBER}"
                             git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:master
                         '''
                     }
