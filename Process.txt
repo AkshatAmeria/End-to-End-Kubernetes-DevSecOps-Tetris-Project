@@ -1,0 +1,856 @@
+# End-to-End DevSecOps Pipeline on AWS EKS
+## Complete Setup Notes – Jenkins + Terraform + AWS + Kubernetes + ArgoCD
+
+**Reference:** [DevSecOps Mastery – Deploying Tetris on AWS EKS with Jenkins and ArgoCD](https://blog.stackademic.com/devsecops-mastery-a-step-by-step-guide-to-deploying-tetris-on-aws-eks-with-jenkins-and-argocd-3adcf21b3120?sk=88ff3719f60773a1db1b0e8b51fb1adb)
+
+---
+
+# PHASE 1: Prerequisites and Local Environment Setup
+
+## 1. Install Terraform Locally
+
+Terraform is an Infrastructure as Code (IaC) tool used to provision and manage AWS infrastructure.
+
+Install Terraform and verify:
+
+```bash
+terraform --version
+```
+
+## 2. Install AWS CLI Locally
+
+AWS CLI allows us to interact with AWS services directly from the terminal.
+
+Verify installation:
+
+```bash
+aws --version
+```
+
+Configure AWS credentials:
+
+```bash
+aws configure
+```
+
+Provide:
+- AWS Access Key ID
+- AWS Secret Access Key
+- Default region
+- Output format (json)
+
+Validate AWS connectivity:
+
+```bash
+aws sts get-caller-identity
+```
+
+This confirms which AWS IAM identity is being used.
+
+## 3. Other Required Tools
+
+Install or prepare:
+
+- Git
+- SSH client
+- kubectl
+- Docker
+- Helm
+- A code editor (VS Code)
+
+Some tools will be installed on the Jenkins server or configured later.
+
+---
+
+# PHASE 2: Jenkins Server Provisioning Using Terraform
+
+## 4. Create Jenkins EC2 Using Terraform
+
+Create a Terraform project:
+
+```text
+Jenkins-Server-TF/
+│
+├── provider.tf
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── userdata.sh
+└── backend.tf
+```
+
+### Purpose of files
+
+| File | Responsibility |
+|---|---|
+| provider.tf | Configures AWS provider |
+| main.tf | Defines AWS infrastructure |
+| variables.tf | Declares input variables |
+| outputs.tf | Displays useful output values |
+| userdata.sh | Installs Jenkins and dependencies |
+| backend.tf | Configures remote Terraform state |
+
+### 4.1 Configure AWS Provider
+
+Configure the AWS provider and region.
+
+```hcl
+provider "aws" {
+  region = "ap-south-1"
+}
+```
+
+### 4.2 Define EC2 Infrastructure
+
+Create an EC2 instance for Jenkins.
+
+Configure:
+- AMI
+- Instance type
+- Key pair
+- Security group
+- Root volume
+- User Data script
+
+The EC2 instance will act as the Jenkins controller/server.
+
+### 4.3 Configure User Data
+
+Use EC2 User Data to automate the installation of Jenkins and its dependencies during the initial instance boot.
+
+Typical installation tasks:
+
+1. Update operating system packages.
+2. Install Java (compatible version).
+3. Add the Jenkins package repository.
+4. Install Jenkins.
+5. Enable and start Jenkins.
+6. Install additional tools if required.
+
+User Data executes automatically when the EC2 instance is initialized.
+
+### 4.4 Initialize and Deploy Terraform
+
+```bash
+terraform init
+terraform validate
+terraform plan
+terraform apply
+```
+
+Terraform provisions the Jenkins EC2 instance.
+
+---
+
+## 5. Configure Terraform Remote Backend – backend.tf
+
+**Optional but recommended.**
+
+By default, Terraform stores state locally in:
+
+```text
+terraform.tfstate
+```
+
+For team environments, remote state management is preferable.
+
+### Components
+
+**S3 Bucket**
+- Stores Terraform state remotely.
+- Makes state accessible to authorized team members.
+- Supports versioning and recovery.
+
+**DynamoDB Table – Legacy Approach**
+- Used for Terraform state locking.
+- Prevents multiple Terraform operations from modifying the same state simultaneously.
+- This is the older locking approach.
+
+**S3 Native Locking – Modern Approach**
+- Uses an S3 lock file to provide state-locking protection.
+- Supported by modern Terraform versions.
+- Can replace DynamoDB locking.
+
+Example backend configuration using S3 native locking:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "your-terraform-state-bucket"
+    key          = "jenkins/terraform.tfstate"
+    region       = "ap-south-1"
+    use_lockfile = true
+  }
+}
+```
+
+Important:
+- Create the S3 bucket before initializing this backend.
+- Enable S3 versioning.
+- Restrict access to the state file because it may contain sensitive information.
+- Do not commit Terraform state or credentials to GitHub.
+
+After configuring:
+
+```bash
+terraform init
+```
+
+---
+
+# PHASE 3: Jenkins Server Configuration
+
+## 6. SSH Into Jenkins EC2
+
+Retrieve the EC2 public IP from Terraform outputs or AWS Console.
+
+Connect:
+
+```bash
+ssh -i <key.pem> ubuntu@<EC2_PUBLIC_IP>
+```
+
+### Validate User Data Execution
+
+Check cloud-init logs:
+
+```bash
+sudo cat /var/log/cloud-init-output.log
+```
+
+Check Jenkins:
+
+```bash
+sudo systemctl status jenkins
+```
+
+Check Java:
+
+```bash
+java -version
+```
+
+Check Jenkins port:
+
+```bash
+sudo ss -tulpn | grep 8080
+```
+
+If Jenkins is running, proceed to browser access.
+
+## 7. Access Jenkins Dashboard
+
+Open:
+
+```text
+http://<EC2_PUBLIC_IP>:8080
+```
+
+Retrieve initial administrator password:
+
+```bash
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+
+Complete:
+1. Unlock Jenkins.
+2. Install suggested plugins.
+3. Create administrator account.
+4. Configure Jenkins URL.
+5. Access the Jenkins dashboard.
+
+**Security:** Restrict port 8080 to your own IP rather than exposing Jenkins publicly.
+
+## 8. Install Required Jenkins Plugins
+
+Install plugins according to the pipeline requirements.
+
+Typical plugins:
+
+- Git Plugin
+- GitHub Integration Plugin
+- Pipeline Plugin
+- Credentials Binding Plugin
+- Docker Pipeline Plugin
+- AWS Credentials Plugin
+- Kubernetes Plugin
+- SSH Agent Plugin
+- Blue Ocean (optional)
+
+Plugin requirements depend on the pipeline implementation.
+
+Restart Jenkins if requested.
+
+## 9. Configure Jenkins Credentials
+
+Navigate:
+
+```text
+Manage Jenkins → Credentials → System → Global credentials
+```
+
+Configure required credentials.
+
+Typical credentials:
+
+| Credential | Purpose |
+|---|---|
+| GitHub PAT | Repository access |
+| AWS credentials | AWS resource access |
+| Docker Hub credentials | Container image publishing |
+| SSH private key | Secure SSH access, if required |
+
+Use appropriate credential IDs in Jenkins pipelines.
+
+**Never hardcode tokens, passwords or AWS keys in Jenkinsfiles.**
+
+---
+
+# PHASE 4: Jenkins and GitHub Integration
+
+## 10. Connect GitHub Repository to Jenkins
+
+Create or use the application repository.
+
+Configure Jenkins to access the repository.
+
+Two common approaches:
+
+**Approach A – Pipeline from SCM**
+- Create a Jenkins Pipeline job.
+- Select Pipeline script from SCM.
+- Choose Git.
+- Provide repository URL.
+- Configure credentials if the repository is private.
+- Specify the Jenkinsfile path.
+
+**Approach B – GitHub Webhook**
+- Configure GitHub webhook to trigger Jenkins.
+- Use the Jenkins webhook endpoint.
+- Configure the required GitHub integration and permissions.
+- Test webhook delivery.
+
+Example webhook endpoint:
+
+```text
+http://<JENKINS_URL>/github-webhook/
+```
+
+For production, use HTTPS and a secured endpoint.
+
+---
+
+# PHASE 5: AWS EKS Infrastructure Provisioning
+
+## 11. Understand AWS EKS Architecture
+
+Amazon EKS is AWS's managed Kubernetes service.
+
+The architecture consists of:
+
+**EKS Control Plane**
+- Managed by AWS.
+- Runs Kubernetes control-plane components.
+- Manages cluster state and API requests.
+
+**Worker Nodes**
+- EC2 instances or Fargate workloads.
+- Run application containers.
+- Join the EKS cluster.
+
+**Supporting AWS Resources**
+- VPC
+- Public and private subnets
+- Route tables
+- Internet Gateway
+- NAT Gateway (where required)
+- IAM roles
+- Security groups
+- EKS cluster
+- Node groups
+
+## 12. Provision EKS Using Terraform
+
+Create or configure Terraform resources for:
+
+1. VPC.
+2. Public and private subnets.
+3. Internet Gateway.
+4. NAT Gateway.
+5. Route tables.
+6. IAM roles and policies.
+7. EKS cluster.
+8. EKS managed node group.
+
+Use a separate Terraform project or clearly separated infrastructure modules.
+
+Deploy:
+
+```bash
+terraform init
+terraform validate
+terraform plan
+terraform apply
+```
+
+Wait for the EKS cluster and node group to become active.
+
+## 13. Configure kubectl
+
+Install kubectl locally.
+
+Update kubeconfig:
+
+```bash
+aws eks update-kubeconfig \
+  --region ap-south-1 \
+  --name <CLUSTER_NAME>
+```
+
+Validate:
+
+```bash
+kubectl get nodes
+kubectl get namespaces
+kubectl cluster-info
+```
+
+The worker nodes should appear in the Ready state.
+
+---
+
+# PHASE 6: Docker and Containerization
+
+## 14. Understand Docker Image Creation
+
+The application needs to be packaged into a Docker image.
+
+Typical process:
+
+1. Get application source code.
+2. Review Dockerfile.
+3. Build Docker image.
+4. Test the container locally.
+5. Tag the image.
+6. Push it to a container registry.
+
+Example:
+
+```bash
+docker build -t tetris-app:latest .
+```
+
+Run locally:
+
+```bash
+docker run -d -p 8080:80 tetris-app:latest
+```
+
+Check:
+
+```bash
+docker ps
+docker logs <CONTAINER_ID>
+```
+
+## 15. Configure Container Registry
+
+Use Docker Hub or Amazon ECR depending on the pipeline design.
+
+For ECR:
+
+```bash
+aws ecr create-repository \
+  --repository-name tetris-app \
+  --region ap-south-1
+```
+
+Authenticate Docker with ECR:
+
+```bash
+aws ecr get-login-password --region ap-south-1 \
+  | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com
+```
+
+Tag and push:
+
+```bash
+docker tag tetris-app:latest \
+  <ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/tetris-app:latest
+
+docker push \
+  <ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/tetris-app:latest
+```
+
+---
+
+# PHASE 7: DevSecOps Pipeline Implementation
+
+## 16. Understand the Pipeline Flow
+
+The overall pipeline follows this sequence:
+
+1. Developer pushes code to GitHub.
+2. GitHub triggers Jenkins.
+3. Jenkins checks out source code.
+4. Static code analysis is performed.
+5. Security and dependency scans are performed.
+6. Docker image is built.
+7. Container image is scanned.
+8. Image is pushed to the container registry.
+9. Kubernetes deployment configuration is updated.
+10. ArgoCD detects the desired-state change.
+11. ArgoCD deploys the application to EKS.
+12. Application health is validated.
+
+## 17. Security Scanning Tools
+
+Depending on the implementation, integrate:
+
+| Tool | Purpose |
+|---|---|
+| SonarQube | Static code quality and security analysis |
+| Trivy | Container image and filesystem vulnerability scanning |
+| OWASP Dependency-Check | Third-party dependency vulnerability scanning |
+| Gitleaks | Detects secrets accidentally committed to source code |
+
+These tools help identify vulnerabilities before application deployment.
+
+## 18. Jenkins Pipeline – Jenkinsfile
+
+Create a Jenkinsfile in the application repository.
+
+Typical pipeline stages:
+
+**Stage 1: Checkout**
+- Pull source code from GitHub.
+
+**Stage 2: Build**
+- Build application artifacts.
+
+**Stage 3: Test**
+- Run unit and integration tests.
+
+**Stage 4: Static Code Analysis**
+- Scan source code using SonarQube.
+
+**Stage 5: Dependency Scanning**
+- Identify vulnerable third-party dependencies.
+
+**Stage 6: Secret Scanning**
+- Detect hardcoded credentials.
+
+**Stage 7: Docker Build**
+- Build application container image.
+
+**Stage 8: Container Scanning**
+- Scan image using Trivy.
+
+**Stage 9: Image Push**
+- Push the verified image to ECR or Docker Hub.
+
+**Stage 10: Update Deployment Manifest**
+- Update Kubernetes deployment image tag in the GitOps repository.
+
+**Stage 11: Deployment Handoff**
+- ArgoCD detects the repository change and synchronizes the cluster.
+
+---
+
+# PHASE 8: Kubernetes Deployment
+
+## 19. Kubernetes Deployment Manifests
+
+Create Kubernetes configuration files.
+
+Typical structure:
+
+```text
+k8s/
+│
+├── deployment.yaml
+├── service.yaml
+└── ingress.yaml
+```
+
+### deployment.yaml
+
+Defines:
+- Application container image.
+- Number of replicas.
+- Container port.
+- Resource requests and limits.
+- Health probes.
+- Environment variables.
+
+### service.yaml
+
+Exposes the application inside the Kubernetes cluster or through an appropriate service type.
+
+Common service types:
+- ClusterIP
+- NodePort
+- LoadBalancer
+
+### ingress.yaml
+
+Defines external HTTP/HTTPS routing when an Ingress controller is configured.
+
+Apply manually for initial testing if needed:
+
+```bash
+kubectl apply -f k8s/
+```
+
+Validate:
+
+```bash
+kubectl get deployments
+kubectl get pods
+kubectl get services
+kubectl describe pods
+```
+
+---
+
+# PHASE 9: ArgoCD – GitOps Continuous Deployment
+
+## 20. Understand ArgoCD
+
+ArgoCD is a GitOps continuous-delivery tool for Kubernetes.
+
+It continuously compares:
+
+**Desired State:** Configuration stored in Git.
+
+**Actual State:** Resources currently running inside Kubernetes.
+
+If there is a difference, ArgoCD can synchronize the cluster with the desired configuration.
+
+Benefits:
+- Declarative deployments.
+- Git-based deployment management.
+- Application health monitoring.
+- Automatic synchronization.
+- Rollback through Git history.
+
+## 21. Install ArgoCD on EKS
+
+Create the ArgoCD namespace:
+
+```bash
+kubectl create namespace argocd
+```
+
+Install ArgoCD using its official installation manifest:
+
+```bash
+kubectl apply -n argocd \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+Validate:
+
+```bash
+kubectl get pods -n argocd
+```
+
+Wait for the ArgoCD components to become Ready.
+
+## 22. Access ArgoCD Dashboard
+
+Use port forwarding for initial access:
+
+```bash
+kubectl port-forward svc/argocd-server \
+  -n argocd 8080:443
+```
+
+Open:
+
+```text
+https://localhost:8080
+```
+
+Retrieve initial admin password:
+
+```bash
+kubectl get secret argocd-initial-admin-secret \
+  -n argocd \
+  -o jsonpath="{.data.password}" | base64 -d
+```
+
+Log in using:
+- Username: admin
+- Password: Retrieved initial password
+
+Change the initial password after login.
+
+## 23. Connect ArgoCD to GitHub
+
+Connect the Git repository containing Kubernetes manifests.
+
+Configure:
+- Repository URL.
+- Repository credentials, if private.
+- Target revision/branch.
+- Application path.
+- Destination EKS cluster.
+- Kubernetes namespace.
+
+Create an ArgoCD application using the UI or CLI.
+
+Example CLI structure:
+
+```bash
+argocd app create tetris-app \
+  --repo <GIT_REPOSITORY_URL> \
+  --path k8s \
+  --dest-server https://kubernetes.default.svc \
+  --dest-namespace default
+```
+
+Synchronize:
+
+```bash
+argocd app sync tetris-app
+```
+
+Validate:
+
+```bash
+argocd app get tetris-app
+kubectl get pods
+kubectl get svc
+```
+
+---
+
+# PHASE 10: End-to-End Pipeline Validation
+
+## 24. Test the Complete Workflow
+
+Perform the following test:
+
+1. Modify application source code.
+2. Commit and push the changes to GitHub.
+3. GitHub triggers Jenkins.
+4. Jenkins checks out the latest code.
+5. Tests and security scans execute.
+6. Docker image is built.
+7. Image vulnerability scan executes.
+8. Image is pushed to ECR.
+9. Deployment manifest is updated with the new image tag.
+10. ArgoCD detects the Git change.
+11. ArgoCD synchronizes the Kubernetes cluster.
+12. New application version becomes available.
+
+## 25. Final Validation Commands
+
+Check Jenkins:
+
+```bash
+sudo systemctl status jenkins
+```
+
+Check EKS:
+
+```bash
+kubectl get nodes
+```
+
+Check Kubernetes workloads:
+
+```bash
+kubectl get pods -A
+kubectl get deployments -A
+kubectl get services -A
+```
+
+Check ArgoCD:
+
+```bash
+argocd app list
+argocd app get tetris-app
+```
+
+Check application logs:
+
+```bash
+kubectl logs <POD_NAME>
+```
+
+Check deployment history:
+
+```bash
+kubectl rollout history deployment/<DEPLOYMENT_NAME>
+```
+
+---
+
+# PHASE 11: Cleanup and Cost Management
+
+## 26. AWS Resource Cleanup
+
+When the project is not being used:
+
+1. Delete the ArgoCD application if no longer required.
+2. Remove Kubernetes workloads.
+3. Delete the EKS cluster and node groups.
+4. Destroy supporting VPC infrastructure.
+5. Destroy Jenkins EC2 infrastructure.
+6. Review and remove unused EBS volumes, Elastic IPs and NAT Gateways.
+7. Keep or remove the Terraform state bucket according to your retention requirements.
+
+Terraform cleanup:
+
+```bash
+terraform destroy
+```
+
+Run it separately for each Terraform-managed infrastructure project, after checking dependencies.
+
+**Important:** NAT Gateways, EC2 instances, EKS clusters, EBS volumes and load balancers can incur charges even when the application is not actively being used.
+
+---
+
+# FINAL ARCHITECTURE
+
+Developer → GitHub → Jenkins → Build & Test → SonarQube → Dependency Scan → Gitleaks → Docker Build → Trivy Scan → ECR → Update GitOps Repository → ArgoCD → AWS EKS → Running Application
+
+## Technologies Covered
+
+| Category | Technology |
+|---|---|
+| IaC | Terraform |
+| Cloud | AWS |
+| Compute | EC2 |
+| CI | Jenkins |
+| Source Control | Git, GitHub |
+| Containers | Docker |
+| Container Registry | AWS ECR |
+| Orchestration | Kubernetes |
+| Managed Kubernetes | AWS EKS |
+| GitOps / CD | ArgoCD |
+| Code Quality | SonarQube |
+| Vulnerability Scanning | Trivy |
+| Dependency Security | OWASP Dependency-Check |
+| Secret Detection | Gitleaks |
+| CLI | AWS CLI, kubectl, Helm |
+
+---
+
+## Important Implementation Notes
+
+1. Jenkins is responsible for CI and building/scanning/publishing application images.
+2. ArgoCD is responsible for CD and synchronizing Kubernetes manifests from Git.
+3. Terraform provisions infrastructure; it does not replace Kubernetes deployment management.
+4. ECR stores container images; Git stores application code and deployment manifests.
+5. ArgoCD watches the GitOps repository, not the Jenkins pipeline directly.
+6. Use immutable Docker image tags (preferably commit SHA) instead of relying on `latest`.
+7. Keep secrets in Jenkins Credentials, AWS Secrets Manager or Kubernetes secret-management integrations.
+8. Restrict Jenkins and ArgoCD access.
+9. Ensure the AWS IAM permissions are scoped to the resources each component needs.
+10. Do not commit credentials, Terraform state files, or private keys to GitHub.
+
+**Project Objective:** Build an end-to-end DevSecOps implementation that demonstrates automated infrastructure provisioning, CI, security scanning, containerization, Kubernetes orchestration, and GitOps-based continuous deployment on AWS.
