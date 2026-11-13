@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: tetris
-        image: akshatameria/tetrisv2:2
+        image: akshatameria/tetrisv2:1
         ports:
         - containerPort: 3000
 ---
